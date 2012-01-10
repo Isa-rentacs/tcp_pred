@@ -33,6 +33,8 @@ static int beta = 819;		/* = 819/1024 (BICTCP_BETA_SCALE) */
 static int initial_ssthresh;
 static int smooth_part = 20;
 static int stasis = 0;
+static int his_len = 6;
+
 module_param(fast_convergence, int, 0644);
 MODULE_PARM_DESC(fast_convergence, "turn on/off fast convergence");
 module_param(max_increment, int, 0644);
@@ -46,9 +48,10 @@ MODULE_PARM_DESC(initial_ssthresh, "initial value of slow start threshold");
 module_param(smooth_part, int, 0644);
 MODULE_PARM_DESC(smooth_part, "log(B/(B*Smin))/log(B/(B-1))+B, # of RTT from Wmax-B to Wmax");
 
-/* modified by isa 20110527 */
-module_param(stasis, int, 0644);
-MODULE_PARM_DESC(stasis, "stasis second near last_max_cwnd");
+module_param(his_len, int , 0644);
+MODULE_PARM_DESC(his_len, "length of history used for prediction");
+
+
 
 /* BIC TCP Parameters */
 struct bictcp {
