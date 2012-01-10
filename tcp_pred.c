@@ -16,7 +16,11 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/random.h>
 #include <net/tcp.h>
+#include "pow2.h"
+#include "sigmoid.h"
+
 
 #define BICTCP_BETA_SCALE    1024	/* Scale factor beta calculation
 					 * max_cwnd = snd_cwnd * beta
@@ -25,6 +29,16 @@
 					  * In binary search,
 					  * go to point (max+min)/N
 					  */
+
+#define L 3
+#define M 4
+#define N 1
+#define ETA 3
+#define ALPHA 16
+#define BETA 16
+#define GAMMA 16
+#define DELTA 16
+#define LOOP_MAX 100
 
 static int fast_convergence = 1;
 static int max_increment = 16;
@@ -51,7 +65,17 @@ MODULE_PARM_DESC(smooth_part, "log(B/(B*Smin))/log(B/(B-1))+B, # of RTT from Wma
 module_param(his_len, int , 0644);
 MODULE_PARM_DESC(his_len, "length of history used for prediction");
 
-
+/*parceptron parameters*/
+struct perceptron_param{
+    s64 wlm[L+1][M];
+    s64 wmn[M+1][N];
+    s64 dlm[L+1][M];
+    s64 dmn[M+1][N];
+    s64 Lout[L];
+    s64 Min[M];
+    s64 Mout[M];
+    s64 Nin[N];
+}p_param;
 
 /* BIC TCP Parameters */
 struct bictcp {
@@ -69,6 +93,148 @@ struct bictcp {
   u32   last_loss_time; /* time when previous packet loss */
 };
 
+static void initialize_perceptron(void){
+    int i,j;
+    for(i=0;i<L+1;i++){
+        for(j=0;j<M;j++){
+            p_param.wlm[i][j] = get_random_int() % (pow2[DELTA+1]+1) - pow2[DELTA];
+        }
+    }
+    for(i=0;i<M+1;i++){
+        for(j=0;j<N;j++){
+            p_param.wmn[i][j] = get_random_int() % (pow2[DELTA+1]+1) - pow2[DELTA];
+        }
+    }
+}
+
+static void initialize_edge_delta(void){
+    int i,j;
+    for(i=0;i<L+1;i++){
+        for(j=0;j<M;j++){
+            p_param.dlm[i][j] = 0;
+        }
+    }
+    for(i=0;i<M+1;i++){
+        for(j=0;j<N;j++){
+            p_param.dmn[i][j] = 0;
+        }
+    }
+}
+
+static s64 get_prediction(struct bictcp *ca){
+    s64 modin;
+    int i,j;
+    //L層の出力としてcaからデータを取る
+    //not implemented yet
+    
+
+    //M層のi-thノードに対する入力値を計算する
+    for(i=0;i<M;i++){
+        p_param.Min[i] = 0;
+        //Lout * weightの和を計算
+        for(j=0;j<L;j++){
+            p_param.Min[i] += p_param.wlm[j][i] * p_param.Lout[j];
+        }
+        //M層のi番目ノードの閾値分を入力から減算
+        p_param.Min[i] += p_param.wlm[L][i] * -1;
+    }
+
+    //M層i-thノードのoutputを計算する    
+    for(i=0;i<M;i++){
+        modin = (p_param.Min[i] >> (1 + DELTA - ALPHA)) / BETA + pow2[ALPHA-1];
+        if(0 <= modin && modin < (1 << ALPHA)){
+            p_param.Mout[i] = sigmoid[modin];
+        }else if(modin < 0){
+            p_param.Mout[i] = 0;
+        }else{
+            p_param.Mout[i] = 1 << GAMMA;
+        }
+    }
+
+    //N層i-thノードへの入力値を計算する
+    for(i=0;i<N;i++){
+        p_param.Nin[i] = 0;
+        for(j=0;j<M;j++){
+            //M層output * weightの和を計算
+            p_param.Nin[i] += p_param.wmn[j][i] * p_param.Mout[j];
+        }
+        p_param.Nin[i] += p_param.wmn[M][i] * -1;
+    }
+
+    modin = (p_param.Nin[0] >> (1+GAMMA+DELTA-ALPHA)) / BETA + pow2[ALPHA-1];
+    if(0 <= modin && modin < (1 << ALPHA)){
+        return sigmoid[modin];
+    }else if(modin < 0){
+        return 0;
+    }else{
+        return 1 << GAMMA;
+    }
+}
+
+static void train(struct bictcp *ca){
+    s64 result, delta_k, delta_j;
+    int x,i,j,k;
+    int ans;
+
+    for(x=0;x<LOOP_MAX;x++){
+        //差分変数の初期化
+        initialize_edge_delta();
+
+        //全ての教師データに対して
+        for(i=0;i<his_len;i++){
+            //教師データを取得する必要がある
+            //not implemented yet
+            ans = 0;
+
+            //予測を出す
+            result = get_prediction(ca);
+
+            delta_k = (ans << GAMMA) - result;
+            delta_k *= (1 << GAMMA) - result;
+            delta_k >>= GAMMA;
+            delta_k *= result;
+            delta_k >>= GAMMA;
+
+            //M->Nの偏微分値
+            for(j=0;j<M+1;j++){
+                for(k=0;k<N;k++){
+                    if(j != M){
+                        p_param.dmn[j][k] += (((delta_k * p_param.Mout[j]) >> GAMMA) << DELTA) >> GAMMA;
+                    }else{
+                        p_param.dmn[j][k] += ((delta_k * -1) << DELTA) >> GAMMA;
+                    }
+                }
+            }
+
+            //L->Mの偏微分値
+            for(j=0;j<M;j++){
+                delta_j = (delta_k * p_param.wmn[j][0]) >> DELTA;
+                delta_j *= p_param.Mout[j];
+                delta_j >>= GAMMA;
+                delta_j *= (1<<GAMMA) - p_param.Mout[j];
+                delta_j >>= GAMMA;
+                for(k=0;k<L+1;k++){
+                    if(k != L){
+                        p_param.dlm[k][j] += (((delta_j * p_param.Lout[k]) >> GAMMA) << DELTA) >> GAMMA;
+                    }else{
+                        p_param.dlm[k][j] += ((delta_j * -1) << DELTA) >> GAMMA;
+                    }
+                }
+            }
+        }
+        for(i=0;i<L+1;i++){
+            for(j=0;j<M;j++){
+                p_param.wlm[i][j] += p_param.dlm[i][j] >> ETA;
+            }
+        }
+        for(i=0;i<M+1;i++){
+            for(j=0;j<N;j++){
+                p_param.wmn[i][j] += p_param.dmn[i][j] >> ETA;
+            }
+        }
+    }
+}
+
 static inline void bictcp_reset(struct bictcp *ca)
 {
 	ca->cnt = 0;
@@ -85,17 +251,7 @@ static inline void bictcp_reset(struct bictcp *ca)
 	ca->history_index=0;
 	ca->last_loss_time = 0;
 }
-/*
-static unsigned u16 myntohs(u16 port)
-{
-  u16 ret;
-  
-  ret = port >> 8;
-  ret += port << 8;
 
-  return ret;
-}
-*/
 static void bictcp_init(struct sock *sk)
 {
 	bictcp_reset(inet_csk_ca(sk));
@@ -211,44 +367,20 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
 	}else{
 	  printk("[L%d]%d %d %d %d %d 1\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
 	}
-	//printk("[%d]%d\n", port, tcp_time_stamp);
-
 	ca->last_loss_time = tcp_time_stamp;
-	
-	/*
-	if(ca->history_index == NUMBER_OF_HISTORY-1)
-	  ca->history_index = 0;
-	else
-	  ca->history_index++;
 
-	for(i=0;i<NUMBER_OF_HISTORY;i++){
-	  if(ca->history[i] != 0){
-	    ave_cwnd += ca->history[i];
-	    num++;
-	  }
-	}
-	*/
-	/*
-	if(ca->history[1] != 0){
-	  ave_cwnd = ave_cwnd + (ca->history[1] - ca->history[0]);
-	}else{
-	  ave_cwnd = tp->snd_cwnd;
-	}
-	*/
-	/*
-	 * enable here when you want to make this module to a basic bic_tcp
-	 *
-	 */
 	ave_cwnd = tp->snd_cwnd;
 	
 	/* Wmax and fast convergence */
-	
+    /*
 	if (tp->snd_cwnd < ca->last_max_cwnd && fast_convergence)
 		ca->last_max_cwnd = (ave_cwnd * (BICTCP_BETA_SCALE + beta))
 			/ (2 * BICTCP_BETA_SCALE);
 	else
 		ca->last_max_cwnd = ave_cwnd;
-
+    */
+    train(ca);
+    ca->last_max_cwnd = get_prediction(ca);
 	ca->loss_cwnd = tp->snd_cwnd;
 
 	if (tp->snd_cwnd <= low_window)
@@ -293,7 +425,7 @@ static struct tcp_congestion_ops bictcp = {
 	.undo_cwnd	= bictcp_undo_cwnd,
 	.pkts_acked     = bictcp_acked,
 	.owner		= THIS_MODULE,
-	.name		= "mybic",
+	.name		= "tcp_pred",
 };
 
 static int __init bictcp_register(void)
