@@ -39,6 +39,7 @@
 #define GAMMA 16
 #define DELTA 16
 #define LOOP_MAX 100
+#define HIS_LEN 6
 
 static int fast_convergence = 1;
 static int max_increment = 16;
@@ -47,7 +48,6 @@ static int beta = 819;		/* = 819/1024 (BICTCP_BETA_SCALE) */
 static int initial_ssthresh;
 static int smooth_part = 20;
 static int stasis = 0;
-static int his_len = 6;
 
 module_param(fast_convergence, int, 0644);
 MODULE_PARM_DESC(fast_convergence, "turn on/off fast convergence");
@@ -61,9 +61,6 @@ module_param(initial_ssthresh, int, 0644);
 MODULE_PARM_DESC(initial_ssthresh, "initial value of slow start threshold");
 module_param(smooth_part, int, 0644);
 MODULE_PARM_DESC(smooth_part, "log(B/(B*Smin))/log(B/(B-1))+B, # of RTT from Wmax-B to Wmax");
-
-module_param(his_len, int , 0644);
-MODULE_PARM_DESC(his_len, "length of history used for prediction");
 
 /*parceptron parameters*/
 struct perceptron_param{
@@ -88,8 +85,10 @@ struct bictcp {
 #define ACK_RATIO_SHIFT	4
   u32	delayed_ack;	/* estimate the ratio of Packets/ACKs << 4 */
 #define NUMBER_OF_HISTORY 2 /* no meaning for default*/
-  s16   history[NUMBER_OF_HISTORY];
-  u16   history_index;
+  u16   elapsed[HIS_LEN];
+  u16   rtt[HIS_LEN];
+  u16   cwnd[HIS_LEN];
+  u8    count; 
   u32   last_loss_time; /* time when previous packet loss */
 };
 
@@ -181,7 +180,7 @@ static void train(struct bictcp *ca){
         initialize_edge_delta();
 
         //全ての教師データに対して
-        for(i=0;i<his_len;i++){
+        for(i=0;i<HIS_LEN;i++){
             //教師データを取得する必要がある
             //not implemented yet
             ans = 0;
@@ -237,6 +236,7 @@ static void train(struct bictcp *ca){
 
 static inline void bictcp_reset(struct bictcp *ca)
 {
+    int i;
 	ca->cnt = 0;
 	ca->last_max_cwnd = 0;
 	ca->loss_cwnd = 0;
@@ -244,12 +244,13 @@ static inline void bictcp_reset(struct bictcp *ca)
 	ca->last_time = 0;
 	ca->epoch_start = 0;
 	ca->delayed_ack = 2 << ACK_RATIO_SHIFT;
-	for(ca->history_index = 0; ca->history_index < NUMBER_OF_HISTORY; ca->history_index++)
-	{
-	  ca->history[ca->history_index] = 0;
-	}
-	ca->history_index=0;
 	ca->last_loss_time = 0;
+    ca->count = 0;
+    for(i=0;i<HIS_LEN;i++){
+        elapsed[i] = 0;
+        rtt[i] = 0;
+        cwnd[i] = 0;
+    }
 }
 
 static void bictcp_init(struct sock *sk)
