@@ -191,7 +191,7 @@ static void train(struct bictcp *ca){
 
             //予測を出す
             result = get_prediction(ca->elapsed[i],
-                                    ca->srtt[i],
+                                    ca->rtt[i],
                                     ca->cwnd[i]);
 
             delta_k = (ans << GAMMA) - result;
@@ -370,13 +370,10 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
         printk("[L%d]%d %d %d %d %d 1\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
     }
 
-    /* 書き換えられてしまうのでlast_max_cwndを保持*/
-    buf_last_max_cwnd = ca->last_max_cwnd;
-
     /* Wmax and fast convergence */
     if(ca->ready == 0){ //loss履歴が十分でない場合予測しない
         if (tp->snd_cwnd < ca->last_max_cwnd && fast_convergence)
-            ca->last_max_cwnd = (ave_cwnd * (BICTCP_BETA_SCALE + beta))
+            ca->last_max_cwnd = (tp->snd_cwnd * (BICTCP_BETA_SCALE + beta))
                 / (2 * BICTCP_BETA_SCALE);
         else
             ca->last_max_cwnd = tp->snd_cwnd;
@@ -390,7 +387,7 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     }
     //index番目にloss状況を記録
     ca->elapsed[ca->index] = tcp_time_stamp - ca->last_loss_time;
-    ca->srtt[ca->index] = tp->srtt;
+    ca->rtt[ca->index] = tp->srtt;
     ca->cwnd[ca->index] = tp->snd_cwnd;
     if(tp->snd_cwnd < buf_last_max_cwnd){
         ca->answer[ca->index] = 0;
