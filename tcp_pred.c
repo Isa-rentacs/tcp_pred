@@ -88,6 +88,7 @@ struct bictcp {
   u16   elapsed[HIS_LEN];
   u16   rtt[HIS_LEN];
   u16   cwnd[HIS_LEN];
+  u8    answer[HIS_LEN];
   u8    count; 
   u32   last_loss_time; /* time when previous packet loss */
 };
@@ -175,6 +176,8 @@ static void train(struct bictcp *ca){
     int x,i,j,k;
     int ans;
 
+    initialize_perceptron();
+
     for(x=0;x<LOOP_MAX;x++){
         //差分変数の初期化
         initialize_edge_delta();
@@ -247,9 +250,9 @@ static inline void bictcp_reset(struct bictcp *ca)
 	ca->last_loss_time = 0;
     ca->count = 0;
     for(i=0;i<HIS_LEN;i++){
-        elapsed[i] = 0;
-        rtt[i] = 0;
-        cwnd[i] = 0;
+        ca->elapsed[i] = 0;
+        ca->rtt[i] = 0;
+        ca->cwnd[i] = 0;
     }
 }
 
@@ -355,12 +358,7 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
 	u8 i=0, num=0;
 	ca->epoch_start = 0;	/* end of epoch */
 
-	/* record the congestion window size at a loss */
-	/* added by Isa 20110606*/
-	
 
-	ca->history[1] = ca->history[0];
-	ca->history[0] = tp->snd_cwnd;
 	port = (u16)tp->inet_conn.icsk_inet.inet_sport >> 8;
 	port += (u16)tp->inet_conn.icsk_inet.inet_sport << 8;
 	if(tp->snd_cwnd < ca->last_max_cwnd){
