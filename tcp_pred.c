@@ -96,12 +96,12 @@ static void initialize_perceptron(void){
     int i,j;
     for(i=0;i<L+1;i++){
         for(j=0;j<M;j++){
-            p_param.wlm[i][j] = get_random_int() % (pow2[DELTA+1]+1) - pow2[DELTA];
+            p_param.wlm[i][j] = random32() % (pow2[DELTA+1]+1) - pow2[DELTA];
         }
     }
     for(i=0;i<M+1;i++){
         for(j=0;j<N;j++){
-            p_param.wmn[i][j] = get_random_int() % (pow2[DELTA+1]+1) - pow2[DELTA];
+            p_param.wmn[i][j] = random32() % (pow2[DELTA+1]+1) - pow2[DELTA];
         }
     }
 }
