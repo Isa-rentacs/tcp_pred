@@ -359,8 +359,12 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     const struct tcp_sock *tp = tcp_sk(sk);
     struct bictcp *ca = inet_csk_ca(sk);
     u16 port=0;
+    u32 buf_last_max_cwnd;
     ca->epoch_start = 0;	/* end of epoch */
 
+
+    //store last_max_cwnd
+    buf_last_max_cwnd = ca->last_max_cwnd;
 
     port = (u16)tp->inet_conn.icsk_inet.inet_sport >> 8;
     port += (u16)tp->inet_conn.icsk_inet.inet_sport << 8;
