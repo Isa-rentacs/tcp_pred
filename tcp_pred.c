@@ -47,7 +47,6 @@ static int low_window = 14;
 static int beta = 819;		/* = 819/1024 (BICTCP_BETA_SCALE) */
 static int initial_ssthresh;
 static int smooth_part = 20;
-static int stasis = 0;
 
 module_param(fast_convergence, int, 0644);
 MODULE_PARM_DESC(fast_convergence, "turn on/off fast convergence");
@@ -359,7 +358,7 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     const struct tcp_sock *tp = tcp_sk(sk);
     struct bictcp *ca = inet_csk_ca(sk);
     u16 port=0;
-    u32 buf_last_max_cwnd;
+    u32 buf_last_max_cwnd, prediction;
     ca->epoch_start = 0;	/* end of epoch */
 
 
@@ -384,9 +383,16 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     }else{
         //loss履歴が十分な場合
         train(ca);
-        ca->last_max_cwnd = get_prediction(tcp_time_stamp - ca->last_loss_time,
+        prediction = get_prediction(tcp_time_stamp - ca->last_loss_time,
                                            tp->srtt,
                                            tp->snd_cwnd);
+        printk("[tcp_pred] packet lossed predction = %d\n", prediction);
+        if(prediction > (1 << (GAMMA - 1))){
+            ca->last_max_cwnd = (tp->snd_cwnd * (BICTCP_BETA_SCALE + beta))
+                / (2 * BICTCP_BETA_SCALE);
+        }else{
+            ca->last_max_cwnd = tp->snd_cwnd;
+        }
         ca->loss_cwnd = tp->snd_cwnd;
     }
     //index番目にloss状況を記録
