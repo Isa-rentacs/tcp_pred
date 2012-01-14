@@ -23,12 +23,12 @@
 
 
 #define BICTCP_BETA_SCALE    1024	/* Scale factor beta calculation
-					 * max_cwnd = snd_cwnd * beta
-					 */
+                                     * max_cwnd = snd_cwnd * beta
+                                     */
 #define BICTCP_B		4	 /*
-					  * In binary search,
-					  * go to point (max+min)/N
-					  */
+                              * In binary search,
+                              * go to point (max+min)/N
+                              */
 
 #define L 3
 #define M 4
@@ -76,21 +76,22 @@ struct perceptron_param{
 
 /* BIC TCP Parameters */
 struct bictcp {
-  u32	cnt;		/* increase cwnd by 1 after ACKs */
-  u32 	last_max_cwnd;	/* last maximum snd_cwnd */
-  u32	loss_cwnd;	/* congestion window at last loss */
-  u32	last_cwnd;	/* the last snd_cwnd */
-  u32	last_time;	/* time when updated last_cwnd */
-  u32	epoch_start;	/* beginning of an epoch */
+    u32	cnt;		/* increase cwnd by 1 after ACKs */
+    u32 	last_max_cwnd;	/* last maximum snd_cwnd */
+    u32	loss_cwnd;	/* congestion window at last loss */
+    u32	last_cwnd;	/* the last snd_cwnd */
+    u32	last_time;	/* time when updated last_cwnd */
+    u32	epoch_start;	/* beginning of an epoch */
 #define ACK_RATIO_SHIFT	4
-  u32	delayed_ack;	/* estimate the ratio of Packets/ACKs << 4 */
+    u32	delayed_ack;	/* estimate the ratio of Packets/ACKs << 4 */
 #define NUMBER_OF_HISTORY 2 /* no meaning for default*/
-  u16   elapsed[HIS_LEN];
-  u16   rtt[HIS_LEN];
-  u16   cwnd[HIS_LEN];
-  u8    answer[HIS_LEN];
-  u8    count; 
-  u32   last_loss_time; /* time when previous packet loss */
+    u16   elapsed[HIS_LEN];
+    u16   rtt[HIS_LEN];
+    u16   cwnd[HIS_LEN];
+    u8    answer[HIS_LEN];
+    u8    index;
+    u8    ready;
+    u32   last_loss_time; /* time when previous packet loss */
 };
 
 static void initialize_perceptron(void){
@@ -240,27 +241,29 @@ static void train(struct bictcp *ca){
 static inline void bictcp_reset(struct bictcp *ca)
 {
     int i;
-	ca->cnt = 0;
-	ca->last_max_cwnd = 0;
-	ca->loss_cwnd = 0;
-	ca->last_cwnd = 0;
-	ca->last_time = 0;
-	ca->epoch_start = 0;
-	ca->delayed_ack = 2 << ACK_RATIO_SHIFT;
-	ca->last_loss_time = 0;
-    ca->count = 0;
+    ca->cnt = 0;
+    ca->last_max_cwnd = 0;
+    ca->loss_cwnd = 0;
+    ca->last_cwnd = 0;
+    ca->last_time = 0;
+    ca->epoch_start = 0;
+    ca->delayed_ack = 2 << ACK_RATIO_SHIFT;
+    ca->last_loss_time = 0;
+    ca->index = 0;
+    ca->ready = 0;
     for(i=0;i<HIS_LEN;i++){
         ca->elapsed[i] = 0;
         ca->rtt[i] = 0;
         ca->cwnd[i] = 0;
+        ca->answer[i] = 0;
     }
 }
 
 static void bictcp_init(struct sock *sk)
 {
-	bictcp_reset(inet_csk_ca(sk));
-	if (initial_ssthresh)
-		tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
+    bictcp_reset(inet_csk_ca(sk));
+    if (initial_ssthresh)
+        tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
 }
 
 /*
@@ -268,76 +271,76 @@ static void bictcp_init(struct sock *sk)
  */
 static inline void bictcp_update(struct bictcp *ca, u32 cwnd)
 {
-	if (ca->last_cwnd == cwnd &&
-	    (s32)(tcp_time_stamp - ca->last_time) <= HZ / 32)
-		return;
+    if (ca->last_cwnd == cwnd &&
+        (s32)(tcp_time_stamp - ca->last_time) <= HZ / 32)
+        return;
 
-	ca->last_cwnd = cwnd;
-	ca->last_time = tcp_time_stamp;
+    ca->last_cwnd = cwnd;
+    ca->last_time = tcp_time_stamp;
 
-	if (ca->epoch_start == 0) /* record the beginning of an epoch */
-		ca->epoch_start = tcp_time_stamp;
+    if (ca->epoch_start == 0) /* record the beginning of an epoch */
+        ca->epoch_start = tcp_time_stamp;
 
-	/* start off normal */
-	if (cwnd <= low_window) {
-		ca->cnt = cwnd;
-		return;
-	}
+    /* start off normal */
+    if (cwnd <= low_window) {
+        ca->cnt = cwnd;
+        return;
+    }
 
-	/* binary increase */
-	if (cwnd < ca->last_max_cwnd) {
-		__u32 	dist = (ca->last_max_cwnd - cwnd)
-			/ BICTCP_B;
+    /* binary increase */
+    if (cwnd < ca->last_max_cwnd) {
+        __u32 	dist = (ca->last_max_cwnd - cwnd)
+            / BICTCP_B;
 
-		if (dist > max_increment)
-			/* linear increase */
-			ca->cnt = cwnd / max_increment;
-		else if (dist <= 1U){
-			/* binary search increase */
-		        ca->cnt = (cwnd * smooth_part) / BICTCP_B;
-		}
-		else
-			/* binary search increase */
-			ca->cnt = cwnd / dist;
-	} else {
-		/* slow start AMD linear increase */
-		if (cwnd < ca->last_max_cwnd + BICTCP_B)
-			/* slow start */
-			ca->cnt = (cwnd * smooth_part) / BICTCP_B;
-		else if (cwnd < ca->last_max_cwnd + max_increment*(BICTCP_B-1))
-			/* slow start */
-			ca->cnt = (cwnd * (BICTCP_B-1))
-				/ (cwnd - ca->last_max_cwnd);
-		else
-			/* linear increase */
-			ca->cnt = cwnd / max_increment;
-	}
+        if (dist > max_increment)
+            /* linear increase */
+            ca->cnt = cwnd / max_increment;
+        else if (dist <= 1U){
+            /* binary search increase */
+            ca->cnt = (cwnd * smooth_part) / BICTCP_B;
+        }
+        else
+            /* binary search increase */
+            ca->cnt = cwnd / dist;
+    } else {
+        /* slow start AMD linear increase */
+        if (cwnd < ca->last_max_cwnd + BICTCP_B)
+            /* slow start */
+            ca->cnt = (cwnd * smooth_part) / BICTCP_B;
+        else if (cwnd < ca->last_max_cwnd + max_increment*(BICTCP_B-1))
+            /* slow start */
+            ca->cnt = (cwnd * (BICTCP_B-1))
+                / (cwnd - ca->last_max_cwnd);
+        else
+            /* linear increase */
+            ca->cnt = cwnd / max_increment;
+    }
 
-	/* if in slow start or link utilization is very low */
-	if (ca->loss_cwnd == 0) {
-		if (ca->cnt > 20) /* increase cwnd 5% per RTT */
-			ca->cnt = 20;
-	}
+    /* if in slow start or link utilization is very low */
+    if (ca->loss_cwnd == 0) {
+        if (ca->cnt > 20) /* increase cwnd 5% per RTT */
+            ca->cnt = 20;
+    }
 
-	ca->cnt = (ca->cnt << ACK_RATIO_SHIFT) / ca->delayed_ack;
-	if (ca->cnt == 0)			/* cannot be zero */
-		ca->cnt = 1;
+    ca->cnt = (ca->cnt << ACK_RATIO_SHIFT) / ca->delayed_ack;
+    if (ca->cnt == 0)			/* cannot be zero */
+        ca->cnt = 1;
 }
 
 static void bictcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 {
-	struct tcp_sock *tp = tcp_sk(sk);
-	struct bictcp *ca = inet_csk_ca(sk);
+    struct tcp_sock *tp = tcp_sk(sk);
+    struct bictcp *ca = inet_csk_ca(sk);
 
-	if (!tcp_is_cwnd_limited(sk, in_flight))
-		return;
+    if (!tcp_is_cwnd_limited(sk, in_flight))
+        return;
 
-	if (tp->snd_cwnd <= tp->snd_ssthresh)
-		tcp_slow_start(tp);
-	else {
-		bictcp_update(ca, tp->snd_cwnd);
-		tcp_cong_avoid_ai(tp, ca->cnt);
-	}
+    if (tp->snd_cwnd <= tp->snd_ssthresh)
+        tcp_slow_start(tp);
+    else {
+        bictcp_update(ca, tp->snd_cwnd);
+        tcp_cong_avoid_ai(tp, ca->cnt);
+    }
 
 }
 
@@ -351,54 +354,74 @@ static void bictcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
  */
 static u32 bictcp_recalc_ssthresh(struct sock *sk)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
-	struct bictcp *ca = inet_csk_ca(sk);
-	u16 port=0;
-	u16 ave_cwnd=0;
-	u8 i=0, num=0;
-	ca->epoch_start = 0;	/* end of epoch */
+    const struct tcp_sock *tp = tcp_sk(sk);
+    struct bictcp *ca = inet_csk_ca(sk);
+    u16 port=0;
+    u32 buf_last_max_cwnd;
+    ca->epoch_start = 0;	/* end of epoch */
 
 
-	port = (u16)tp->inet_conn.icsk_inet.inet_sport >> 8;
-	port += (u16)tp->inet_conn.icsk_inet.inet_sport << 8;
-	if(tp->snd_cwnd < ca->last_max_cwnd){
-	  printk("[L%d]%d %d %d %d %d 0\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
-	}else{
-	  printk("[L%d]%d %d %d %d %d 1\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
-	}
-	ca->last_loss_time = tcp_time_stamp;
+    port = (u16)tp->inet_conn.icsk_inet.inet_sport >> 8;
+    port += (u16)tp->inet_conn.icsk_inet.inet_sport << 8;
+    if(tp->snd_cwnd < ca->last_max_cwnd){
+        printk("[L%d]%d %d %d %d %d 0\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
+    }else{
+        printk("[L%d]%d %d %d %d %d 1\n", port, tcp_time_stamp - ca->last_loss_time, tp->srtt, ca->last_max_cwnd, tp->snd_ssthresh, ca->loss_cwnd);
+    }
 
-	ave_cwnd = tp->snd_cwnd;
-	
-	/* Wmax and fast convergence */
-    /*
-	if (tp->snd_cwnd < ca->last_max_cwnd && fast_convergence)
-		ca->last_max_cwnd = (ave_cwnd * (BICTCP_BETA_SCALE + beta))
-			/ (2 * BICTCP_BETA_SCALE);
-	else
-		ca->last_max_cwnd = ave_cwnd;
-    */
-    train(ca);
-    ca->last_max_cwnd = get_prediction(ca);
-	ca->loss_cwnd = tp->snd_cwnd;
+    /* 書き換えられてしまうのでlast_max_cwndを保持*/
+    buf_last_max_cwnd = ca->last_max_cwnd;
 
-	if (tp->snd_cwnd <= low_window)
-		return max(tp->snd_cwnd >> 1U, 2U);
-	else
-		return max((tp->snd_cwnd * beta) / BICTCP_BETA_SCALE, 2U);
+    /* Wmax and fast convergence */
+    if(ca->ready == 0){ //loss履歴が十分でない場合予測しない
+        if (tp->snd_cwnd < ca->last_max_cwnd && fast_convergence)
+            ca->last_max_cwnd = (ave_cwnd * (BICTCP_BETA_SCALE + beta))
+                / (2 * BICTCP_BETA_SCALE);
+        else
+            ca->last_max_cwnd = tp->snd_cwnd;
+    }else{
+        //loss履歴が十分な場合
+        train(ca);
+        ca->last_max_cwnd = get_prediction(ca);
+        ca->loss_cwnd = tp->snd_cwnd;
+    }
+    //index番目にloss状況を記録
+    ca->elapsed[ca->index] = tcp_time_stamp - ca->last_loss_time;
+    ca->srtt[ca->index] = tp->srtt;
+    ca->cwnd[ca->index] = buf_last_max_cwnd;
+    if(tp->snd_cwnd < buf_last_max_cwnd){
+        ca->answer[ca->index] = 0;
+    }else{
+        ca->answer[ca->index] = 1;
+    }
+
+    //indexを1つ進める
+    ca->index++;
+    if(ca->index == HIS_LEN){
+        if(ca->ready == 0){
+            ca->ready = 1;
+        }
+        ca->index = 0;
+    }
+    ca->last_loss_time = tcp_time_stamp;
+
+    if (tp->snd_cwnd <= low_window)
+        return max(tp->snd_cwnd >> 1U, 2U);
+    else
+        return max((tp->snd_cwnd * beta) / BICTCP_BETA_SCALE, 2U);
 }
 
 static u32 bictcp_undo_cwnd(struct sock *sk)
 {
-	const struct tcp_sock *tp = tcp_sk(sk);
-	const struct bictcp *ca = inet_csk_ca(sk);
-	return max(tp->snd_cwnd, ca->last_max_cwnd);
+    const struct tcp_sock *tp = tcp_sk(sk);
+    const struct bictcp *ca = inet_csk_ca(sk);
+    return max(tp->snd_cwnd, ca->last_max_cwnd);
 }
 
 static void bictcp_state(struct sock *sk, u8 new_state)
 {
-	if (new_state == TCP_CA_Loss)
-		bictcp_reset(inet_csk_ca(sk));
+    if (new_state == TCP_CA_Loss)
+        bictcp_reset(inet_csk_ca(sk));
 }
 
 /* Track delayed acknowledgment ratio using sliding window
@@ -406,36 +429,36 @@ static void bictcp_state(struct sock *sk, u8 new_state)
  */
 static void bictcp_acked(struct sock *sk, u32 cnt, s32 rtt)
 {
-	const struct inet_connection_sock *icsk = inet_csk(sk);
+    const struct inet_connection_sock *icsk = inet_csk(sk);
 
-	if (icsk->icsk_ca_state == TCP_CA_Open) {
-		struct bictcp *ca = inet_csk_ca(sk);
-		cnt -= ca->delayed_ack >> ACK_RATIO_SHIFT;
-		ca->delayed_ack += cnt;
-	}
+    if (icsk->icsk_ca_state == TCP_CA_Open) {
+        struct bictcp *ca = inet_csk_ca(sk);
+        cnt -= ca->delayed_ack >> ACK_RATIO_SHIFT;
+        ca->delayed_ack += cnt;
+    }
 }
 
 
 static struct tcp_congestion_ops bictcp = {
-	.init		= bictcp_init,
-	.ssthresh	= bictcp_recalc_ssthresh,
-	.cong_avoid	= bictcp_cong_avoid,
-	.set_state	= bictcp_state,
-	.undo_cwnd	= bictcp_undo_cwnd,
-	.pkts_acked     = bictcp_acked,
-	.owner		= THIS_MODULE,
-	.name		= "tcp_pred",
+    .init		= bictcp_init,
+    .ssthresh	= bictcp_recalc_ssthresh,
+    .cong_avoid	= bictcp_cong_avoid,
+    .set_state	= bictcp_state,
+    .undo_cwnd	= bictcp_undo_cwnd,
+    .pkts_acked     = bictcp_acked,
+    .owner		= THIS_MODULE,
+    .name		= "tcp_pred",
 };
 
 static int __init bictcp_register(void)
 {
-	BUILD_BUG_ON(sizeof(struct bictcp) > ICSK_CA_PRIV_SIZE);
-	return tcp_register_congestion_control(&bictcp);
+    BUILD_BUG_ON(sizeof(struct bictcp) > ICSK_CA_PRIV_SIZE);
+    return tcp_register_congestion_control(&bictcp);
 }
 
 static void __exit bictcp_unregister(void)
 {
-	tcp_unregister_congestion_control(&bictcp);
+    tcp_unregister_congestion_control(&bictcp);
 }
 
 module_init(bictcp_register);
