@@ -122,12 +122,13 @@ static void initialize_edge_delta(void){
     }
 }
 
-static s64 get_prediction(struct bictcp *ca){
+static s64 get_prediction(u16 elapsed, u16 srtt, u16 cwnd){
     s64 modin;
     int i,j;
     //L層の出力としてcaからデータを取る
-    //not implemented yet
-    
+    p_param.Lout[0] = elapsed;
+    p_param.Lout[1] = srtt;
+    p_param.Lout[2] = cwnd;
 
     //M層のi-thノードに対する入力値を計算する
     for(i=0;i<M;i++){
@@ -186,11 +187,12 @@ static void train(struct bictcp *ca){
         //全ての教師データに対して
         for(i=0;i<HIS_LEN;i++){
             //教師データを取得する必要がある
-            //not implemented yet
-            ans = 0;
+            ans = ca->answer[i];
 
             //予測を出す
-            result = get_prediction(ca);
+            result = get_prediction(ca->elapsed[i],
+                                    ca->srtt[i],
+                                    ca->cwnd[i]);
 
             delta_k = (ans << GAMMA) - result;
             delta_k *= (1 << GAMMA) - result;
@@ -357,7 +359,6 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     const struct tcp_sock *tp = tcp_sk(sk);
     struct bictcp *ca = inet_csk_ca(sk);
     u16 port=0;
-    u32 buf_last_max_cwnd;
     ca->epoch_start = 0;	/* end of epoch */
 
 
@@ -382,13 +383,15 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     }else{
         //loss履歴が十分な場合
         train(ca);
-        ca->last_max_cwnd = get_prediction(ca);
+        ca->last_max_cwnd = get_prediction(tcp_time_stamp - ca->last_loss_time,
+                                           tp->srtt,
+                                           tp->snd_cwnd);
         ca->loss_cwnd = tp->snd_cwnd;
     }
     //index番目にloss状況を記録
     ca->elapsed[ca->index] = tcp_time_stamp - ca->last_loss_time;
     ca->srtt[ca->index] = tp->srtt;
-    ca->cwnd[ca->index] = buf_last_max_cwnd;
+    ca->cwnd[ca->index] = tp->snd_cwnd;
     if(tp->snd_cwnd < buf_last_max_cwnd){
         ca->answer[ca->index] = 0;
     }else{
