@@ -393,8 +393,9 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
         }else{
             ca->last_max_cwnd = tp->snd_cwnd;
         }
-        ca->loss_cwnd = tp->snd_cwnd;
     }
+
+    ca->loss_cwnd = tp->snd_cwnd;
     //index番目にloss状況を記録
     ca->elapsed[ca->index] = tcp_time_stamp - ca->last_loss_time;
     ca->rtt[ca->index] = tp->srtt;
