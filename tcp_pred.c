@@ -390,12 +390,7 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
                                            tp->srtt,
                                            tp->snd_cwnd);
         printk("[tcp_pred] packet lossed predction = %d\n", prediction);
-        if(prediction > (1 << (GAMMA - 1))){
-            ca->last_max_cwnd = (tp->snd_cwnd * (BICTCP_BETA_SCALE + beta))
-                / (2 * BICTCP_BETA_SCALE);
-        }else{
-            ca->last_max_cwnd = tp->snd_cwnd;
-        }
+        ca->last_max_cwnd = tp->snd_cwnd + (tp->snd_cwnd * (prediction - (1 << 15))) / ((1 << 17) + (1 << 16) + (1 << 15));
     }
     
     //default action
