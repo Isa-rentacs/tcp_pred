@@ -419,9 +419,6 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     //indexを1つ進める
     ca->index++;
     if(ca->index == HIS_LEN){
-        if(ca->ready == 0){
-            ca->ready = 1;
-        }
         ca->index = 0;
     }
 
