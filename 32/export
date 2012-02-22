@@ -1,0 +1,3 @@
+#!/bin/bash
+
+sudo cp /home/isa/src/tcp_pred/tcp_pred.ko /lib/modules/3.2.6sock512/kernel/net/ipv4/tcp_pred.ko
