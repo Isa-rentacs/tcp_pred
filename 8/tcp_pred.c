@@ -39,7 +39,7 @@
 #define GAMMA 16
 #define DELTA 16
 #define LOOP_MAX 100
-#define HIS_LEN 6 //number of teacher data
+#define HIS_LEN 8 //number of teacher data
 
 static int fast_convergence = 1;
 static int max_increment = 16;
