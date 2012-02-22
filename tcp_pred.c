@@ -39,7 +39,7 @@
 #define GAMMA 16
 #define DELTA 16
 #define LOOP_MAX 100
-#define HIS_LEN 6
+#define HIS_LEN 6 //number of teacher data
 
 static int fast_convergence = 1;
 static int max_increment = 16;
@@ -92,7 +92,7 @@ struct bictcp {
     u16   cwnd[HIS_LEN];
     u8    answer[HIS_LEN];
     u8    index;
-    u8    ready;
+    u8    his_num;
     u32   last_loss_time; /* time when previous packet loss */
 };
 
@@ -187,7 +187,7 @@ static void train(struct bictcp *ca){
         initialize_edge_delta();
 
         //全ての教師データに対して
-        for(i=0;i<HIS_LEN;i++){
+        for(i=0;i<ca->his_num;i++){
             //教師データを取得する必要がある
             ans = ca->answer[i];
 
@@ -254,7 +254,7 @@ static inline void bictcp_reset(struct bictcp *ca)
     ca->delayed_ack = 2 << ACK_RATIO_SHIFT;
     ca->last_loss_time = 0;
     ca->index = 0;
-    ca->ready = 0;
+    ca->his_num = 0;
     for(i=0;i<HIS_LEN;i++){
         ca->elapsed[i] = 0;
         ca->rtt[i] = 0;
@@ -377,23 +377,33 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
     }
 
     /* Wmax and fast convergence */
-    if(ca->ready == 0){ //loss履歴が十分でない場合予測しない
+    if(ca->his_num == 0){ 
+        /*
+         * if there are no histories of packet loss,
+         * act as default BIC.
+         */
         if (tp->snd_cwnd < ca->last_max_cwnd && fast_convergence)
             ca->last_max_cwnd = (tp->snd_cwnd * (BICTCP_BETA_SCALE + beta))
                 / (2 * BICTCP_BETA_SCALE);
         else
             ca->last_max_cwnd = tp->snd_cwnd;
     }else{
-        //loss履歴が十分な場合
+        /*
+         * in case there is at least one history
+         *
+         */
         train(ca);
         prediction = get_prediction(tcp_time_stamp - ca->last_loss_time,
                                            tp->srtt,
                                            tp->snd_cwnd);
-        printk("[tcp_pred] packet lossed predction = %d\n", prediction);
-        ca->last_max_cwnd = tp->snd_cwnd + (tp->snd_cwnd * (prediction - (1 << 15))) / ((1 << 17) + (1 << 16) + (1 << 15));
-        printk("[tcp_pred]next last_max_cwnd = %d\n", ca->last_max_cwnd);
+        printk("[tcp_pred] packet lossed predction = %d, his_num = %d\n", prediction, ca->his_num);
+        if(prediction < (1 << (GAMMA - 1))){
+            ca->last_max_cwnd = (tp->snd_cwnd * (BICTCP_BETA_SCALE + beta))
+                / (2 * BICTCP_BETA_SCALE);
+        }else{
+            ca->last_max_cwnd = tp->snd_cwnd;
+        }
     }
-    
     //default action
     ca->loss_cwnd = tp->snd_cwnd;
     //index番目にloss状況を記録
@@ -414,6 +424,13 @@ static u32 bictcp_recalc_ssthresh(struct sock *sk)
         }
         ca->index = 0;
     }
+
+    //his_num++
+    if(ca->his_num < HIS_LEN){
+        ca->his_num++;
+    }
+
+    //update timestamp at a packet loss
     ca->last_loss_time = tcp_time_stamp;
 
     if (tp->snd_cwnd <= low_window)
