@@ -1,0 +1,29 @@
+#!/bin/bash
+
+./gen_pred.pl 4  < tcp_pred.c > ./4/tcp_pred4.c
+./gen_pred.pl 8  < tcp_pred.c > ./8/tcp_pred8.c
+./gen_pred.pl 16 < tcp_pred.c > ./16/tcp_pred16.c
+./gen_pred.pl 32 < tcp_pred.c > ./32/tcp_pred32.c
+./gen_pred.pl 64 < tcp_pred.c > ./64/tcp_pred64.c
+
+cd /home/isa/src/tcp_pred/4
+sudo make -C /usr/src/linux/ `pwd` modules
+sudo cp `pwd`/tcp_pred4.ko /lib/modules/$(uname -r)/kernel/net/ipv4/
+
+cd /home/isa/src/tcp_pred/8
+sudo make -C /usr/src/linux/ `pwd` modules
+sudo cp `pwd`/tcp_pred8.ko /lib/modules/$(uname -r)/kernel/net/ipv4/
+
+cd /home/isa/src/tcp_pred/16
+sudo make -C /usr/src/linux/ `pwd` modules
+sudo cp `pwd`/tcp_pred16.ko /lib/modules/$(uname -r)/kernel/net/ipv4/
+
+cd /home/isa/src/tcp_pred/32
+sudo make -C /usr/src/linux/ `pwd` modules
+sudo cp `pwd`/tcp_pred32.ko /lib/modules/$(uname -r)/kernel/net/ipv4/
+
+cd /home/isa/src/tcp_pred/64
+sudo make -C /usr/src/linux/ `pwd` modules
+sudo cp `pwd`/tcp_pred64.ko /lib/modules/$(uname -r)/kernel/net/ipv4/
+
+depmod -a
